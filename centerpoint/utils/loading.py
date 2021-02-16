@@ -11,6 +11,7 @@ import pyntcloud
 
 from argoverse.utils.pkl_utils import save_pkl_dictionary
 
+from centerpoint import pypcd
 
 
 def load_ply_xyzir(ply_fpath: str) -> np.ndarray:
@@ -241,6 +242,16 @@ class LoadPointCloudFromFile(object):
                 "boxes": gt_boxes[mask_not_zero, :].astype(np.float32),
                 "names": gt_names[mask_not_zero],
             }
+        elif res["type"] == "PCDDataset":
+            path = info['path']
+            point_cloud = pypcd.point_cloud_from_path(path).pc_data
+            points = np.c_[point_cloud['x'], point_cloud['y'], point_cloud['z'], point_cloud['intensity']]
+            points = points[:,[0,1,2,3,0]]
+            #Doing the next line because of no sweep infrastructure
+            points[:,4] = np.zeros(points[:,4].shape)
+            points[:,2] = points[:,2] + 1.6
+            points[:,0] = -points[:,0]
+            res["lidar"]["points"] = points
         else:
             raise NotImplementedError
 

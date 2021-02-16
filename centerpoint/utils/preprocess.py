@@ -9,74 +9,43 @@ from centerpoint.utils.center_utils import draw_umich_gaussian, gaussian_radius
 
 class Preprocess(object):
     def __init__(self, cfg=None, **kwargs):
-        self.remove_environment = cfg.remove_environment
+        print('Preprocess cfg = ', cfg)
         self.shuffle_points = cfg.shuffle_points
-        self.remove_unknown = cfg.remove_unknown_examples
-        self.min_points_in_gt = cfg.__dict__.get("min_points_in_gt", -1)
-        self.add_rgb_to_points = cfg.__dict__.get("add_rgb_to_points", False)
-        self.reference_detections = cfg.__dict__.get("reference_detections", None)
-        self.remove_outside_points = cfg.__dict__.get("remove_outside_points", False)
-        self.random_crop = cfg.__dict__.get("random_crop", False)
-
-        self.normalize_intensity = cfg.__dict__.get("normalize_intensity", False)
+        self.min_points_in_gt = -1#cfg.get("min_points_in_gt", -1)
         
         self.mode = cfg.mode
         if self.mode == "train":
-            self.gt_rotation_noise = cfg.gt_rot_noise
-            self.gt_loc_noise_std = cfg.gt_loc_noise
             self.global_rotation_noise = cfg.global_rot_noise
             self.global_scaling_noise = cfg.global_scale_noise
-            self.global_random_rot_range = cfg.global_rot_per_obj_range
-            self.global_translate_noise_std = cfg.global_trans_noise
-            self.gt_points_drop = (cfg.gt_drop_percentage,)
-            self.remove_points_after_sample = cfg.remove_points_after_sample
             self.class_names = cfg.class_names
             if cfg.db_sampler != None:
                 self.db_sampler = build_dbsampler(cfg.db_sampler)
             else:
                 self.db_sampler = None 
                 
-            self.flip_single = cfg.get("flip_single", False)
             self.npoints = cfg.get("npoints", -1)
-            self.random_select = cfg.get("random_select", False)
 
-        self.symmetry_intensity = cfg.__dict__.get("symmetry_intensity", False)
-        self.kitti_double = cfg.__dict__.get("kitti_double", False)
+        self.no_augmentation = False#cfg.get('no_augmentation', False)
 
     def __call__(
         self,
         res: Dict[str,Any],
         info: Dict[str,Any]
     ) -> Tuple[ Dict[str,Any], Dict[str,Any] ]:
-        """
-        Args:
-            res: dictionary with keys
-                'lidar',
-                'metadata',
-                'calib',
-                'cam',
-                'mode', e.g. 'val'
-                'type', e.g. 'NuScenesDataset'
-            
-                res['lidar'] is also a dictionary, with keys
-                    'type', 'points', 'nsweeps', 'annotations', 'times', 'combined'
 
-            info: dictionary with keys
-                'lidar_path', 'cam_front_path', 'cam_intrinsic', 'token',
-                'sweeps', 'ref_from_car', 'car_from_global', 'timestamp',
-                'gt_boxes', 'gt_boxes_velocity', 'gt_names', 'gt_boxes_token'
-        
-                info['gt_boxes'] has a shape (N, 9), e.g. N=37
-        
-        Returns:
-            res["lidar"]["points"] is updated to contain (N,5) array res["lidar"]["combined"]
-        """
         res["mode"] = self.mode
 
         if res["type"] in ["WaymoDataset"]:
-            points = res["lidar"]["points"]
-        elif res["type"] in ["NuScenesDataset"]:
+            if "combined" in res["lidar"]:
+                points = res["lidar"]["combined"]
+            else:
+                points = res["lidar"]["points"]
+        elif res["type"] in ["NuScenesDataset", "ArgoVerseDataset"]:
             points = res["lidar"]["combined"]
+        elif res["type"] in ["PCDDataset"]:
+            points = res["lidar"]["points"]
+        else:
+            raise NotImplementedError
 
         if self.mode == "train":
             anno_dict = res["lidar"]["annotations"]
@@ -86,74 +55,14 @@ class Preprocess(object):
                 "gt_names": np.array(anno_dict["names"]).reshape(-1),
             }
 
-            if "difficulty" not in anno_dict:
-                difficulty = np.zeros([anno_dict["boxes"].shape[0]], dtype=np.int32)
-                gt_dict["difficulty"] = difficulty
-            else:
-                gt_dict["difficulty"] = anno_dict["difficulty"]
-
-        if "calib" in res:
-            calib = res["calib"]
-        else:
-            calib = None
-
-        if self.add_rgb_to_points:
-            assert calib is not None and "image" in res
-            image_path = res["image"]["image_path"]
-            image = (
-                    imgio.imread(str(pathlib.Path(root_path) / image_path)).astype(
-                        np.float32
-                    )
-                    / 255
-            )
-            points_rgb = box_np_ops.add_rgb_to_points(
-                points, image, calib["rect"], calib["Trv2c"], calib["P2"]
-            )
-            points = np.concatenate([points, points_rgb], axis=1)
-            num_point_features += 3
-
-        if self.reference_detections is not None:
-            assert calib is not None and "image" in res
-            C, R, T = box_np_ops.projection_matrix_to_CRT_kitti(P2)
-            frustums = box_np_ops.get_frustum_v2(reference_detections, C)
-            frustums -= T
-            frustums = np.einsum("ij, akj->aki", np.linalg.inv(R), frustums)
-            frustums = box_np_ops.camera_to_lidar(frustums, rect, Trv2c)
-            surfaces = box_np_ops.corner_to_surfaces_3d_jit(frustums)
-            masks = points_in_convex_polygon_3d_jit(points, surfaces)
-            points = points[masks.any(-1)]
-
-        if self.remove_outside_points:
-            assert calib is not None
-            image_shape = res["metadata"]["image_shape"]
-            points = box_np_ops.remove_outside_points(
-                points, calib["rect"], calib["Trv2c"], calib["P2"], image_shape
-            )
-        if self.remove_environment is True and self.mode == "train":
-            selected = keep_arrays_by_name(gt_names, target_assigner.classes)
-            _dict_select(gt_dict, selected)
-            masks = box_np_ops.points_in_rbbox(points, gt_dict["gt_boxes"])
-            points = points[masks.any(-1)]
-
-        if self.mode == "train":
+        if self.mode == "train" and not self.no_augmentation:
             selected = drop_arrays_by_name(
                 gt_dict["gt_names"], ["DontCare", "ignore", "UNKNOWN"]
             )
 
             _dict_select(gt_dict, selected)
-            if self.remove_unknown:
-                remove_mask = gt_dict["difficulty"] == -1
-                """
-                gt_boxes_remove = gt_boxes[remove_mask]
-                gt_boxes_remove[:, 3:6] += 0.25
-                points = prep.remove_points_in_boxes(points, gt_boxes_remove)
-                """
-                keep_mask = np.logical_not(remove_mask)
-                _dict_select(gt_dict, keep_mask)
-            gt_dict.pop("difficulty")
 
             if self.min_points_in_gt > 0:
-                # points_count_rbbox takes 10ms with 10 sweeps nuscenes data
                 point_counts = box_np_ops.points_count_rbbox(
                     points, gt_dict["gt_boxes"]
                 )
@@ -170,10 +79,10 @@ class Preprocess(object):
                     gt_dict["gt_boxes"],
                     gt_dict["gt_names"],
                     res["metadata"]["num_point_features"],
-                    self.random_crop,
+                    False,
                     gt_group_ids=None,
-                    calib=calib,
-                    road_planes=None # res["lidar"]["ground_plane"]
+                    calib=None,
+                    road_planes=None
                 )
 
                 if sampled_dict is not None:
@@ -191,21 +100,8 @@ class Preprocess(object):
                         [gt_boxes_mask, sampled_gt_masks], axis=0
                     )
 
-                    if self.remove_points_after_sample:
-                        masks = box_np_ops.points_in_rbbox(points, sampled_gt_boxes)
-                        points = points[np.logical_not(masks.any(-1))]
 
                     points = np.concatenate([sampled_points, points], axis=0)
-            prep.noise_per_object_v3_(
-                gt_dict["gt_boxes"],
-                points,
-                gt_boxes_mask,
-                rotation_perturb=self.gt_rotation_noise,
-                center_noise_std=self.gt_loc_noise_std,
-                global_random_rot_range=self.global_random_rot_range,
-                group_ids=None,
-                num_try=100,
-            )
 
             _dict_select(gt_dict, gt_boxes_mask)
 
@@ -215,16 +111,7 @@ class Preprocess(object):
             )
             gt_dict["gt_classes"] = gt_classes
 
-            iskitti = res["type"] in ["KittiDataset"]
-
-            if self.kitti_double:
-                assert False, "No more KITTI"
-                gt_dict["gt_boxes"], points = prep.random_flip_both(gt_dict["gt_boxes"], points, flip_coor=70.4/2)
-            elif self.flip_single or iskitti:
-                assert False, "nuscenes double flip is better"
-                gt_dict["gt_boxes"], points = prep.random_flip(gt_dict["gt_boxes"], points)
-            else:
-                gt_dict["gt_boxes"], points = prep.random_flip_both(gt_dict["gt_boxes"], points)
+            gt_dict["gt_boxes"], points = prep.random_flip_both(gt_dict["gt_boxes"], points)
             
             gt_dict["gt_boxes"], points = prep.global_rotation(
                 gt_dict["gt_boxes"], points, rotation=self.global_rotation_noise
@@ -232,46 +119,21 @@ class Preprocess(object):
             gt_dict["gt_boxes"], points = prep.global_scaling_v2(
                 gt_dict["gt_boxes"], points, *self.global_scaling_noise
             )
+        elif self.no_augmentation:
+            gt_boxes_mask = np.array(
+                [n in self.class_names for n in gt_dict["gt_names"]], dtype=np.bool_
+            )
+            _dict_select(gt_dict, gt_boxes_mask)
+
+            gt_classes = np.array(
+                [self.class_names.index(n) + 1 for n in gt_dict["gt_names"]],
+                dtype=np.int32,
+            )
+            gt_dict["gt_classes"] = gt_classes
+
 
         if self.shuffle_points:
-            # shuffle is a little slow.
             np.random.shuffle(points)
-
-        if self.mode == "train" and self.random_select:
-            if self.npoints < points.shape[0]:
-                pts_depth = points[:, 2]
-                pts_near_flag = pts_depth < 40.0
-                far_idxs_choice = np.where(pts_near_flag == 0)[0]
-                near_idxs = np.where(pts_near_flag == 1)[0]
-                near_idxs_choice = np.random.choice(
-                    near_idxs, self.npoints - len(far_idxs_choice), replace=False
-                )
-
-                choice = (
-                    np.concatenate((near_idxs_choice, far_idxs_choice), axis=0)
-                    if len(far_idxs_choice) > 0
-                    else near_idxs_choice
-                )
-                np.random.shuffle(choice)
-            else:
-                choice = np.arange(0, len(points), dtype=np.int32)
-                if self.npoints > len(points):
-                    extra_choice = np.random.choice(
-                        choice, self.npoints - len(points), replace=False
-                    )
-                    choice = np.concatenate((choice, extra_choice), axis=0)
-                np.random.shuffle(choice)
-
-            points = points[choice]
-
-        if self.symmetry_intensity:
-            points[:, -1] -= 0.5  # translate intensity to [-0.5, 0.5]
-            # points[:, -1] *= 2
-
-        if self.normalize_intensity and res["type"] in ["NuScenesDataset"]:
-            # print(points[:20, 3])
-            assert 0, "Velocity Accuracy drops 3 percent with normalization.."
-            points[:, 3] /= 255
 
         res["lidar"]["points"] = points
 

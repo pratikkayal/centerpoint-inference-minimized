@@ -2,3 +2,11 @@
 *.pyc
 *.DS_Store
 *.egg-info/
+work_dirs/mixed_wn/latest.pth
+work_dirs/mixed_wn/2020-01-13-argoverse_test_prediction.pkl
+iou3d_nms/iou3d_nms_cuda.cpython-36m-x86_64-linux-gnu.so
+.gitignore
+dcn/deform_conv_cuda.cpython-36m-x86_64-linux-gnu.so
+.gitignore
+data/Panasonic
+.ipynb_checkpoints/Panasonic-checkpoint.ipynb

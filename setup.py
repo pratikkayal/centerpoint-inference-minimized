@@ -22,17 +22,15 @@ with open(path.join(here, "README.md"), encoding="utf-8") as f:
 
 
 if platform.system() == "Windows":
-    print("Argoverse currently does not support Windows, please use Linux/Mac OS")
+    print("Currently does not support Windows, please use Linux/Mac OS")
     sys.exit(1)
 
 setup(
-    name="argoverse_centerpoint_simplified",
+    name="centerpoint_inference_minimized",
     version="1.0.0",
     description="",
     long_description=long_description,
     url="",
-    author="John Lambert",
-    author_email="johnlambert@gatech.edu",
     license="MIT",
     classifiers=[
         "Development Status :: 5 - Production/Stable",

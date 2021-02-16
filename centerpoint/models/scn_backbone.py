@@ -319,33 +319,49 @@ class SpMiddleResNetFHD(nn.Module):
             norm_cfg = dict(type="BN1d", eps=1e-3, momentum=0.01)
 
         # input: # [1600, 1200, 41]
-        self.middle_conv = spconv.SparseSequential(
+        self.conv_input = spconv.SparseSequential(
             SubMConv3d(num_input_features, 16, 3, bias=False, indice_key="res0"),
             build_norm_layer(norm_cfg, 16)[1],
-            nn.ReLU(),
+            nn.ReLU(inplace=True)
+        )
+
+        self.conv1 = spconv.SparseSequential(        
             SparseBasicBlock(16, 16, norm_cfg=norm_cfg, indice_key="res0"),
             SparseBasicBlock(16, 16, norm_cfg=norm_cfg, indice_key="res0"),
+        )
+
+        self.conv2 = spconv.SparseSequential(
             SparseConv3d(
                 16, 32, 3, 2, padding=1, bias=False
             ),  # [1600, 1200, 41] -> [800, 600, 21]
             build_norm_layer(norm_cfg, 32)[1],
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             SparseBasicBlock(32, 32, norm_cfg=norm_cfg, indice_key="res1"),
             SparseBasicBlock(32, 32, norm_cfg=norm_cfg, indice_key="res1"),
+        )
+
+        self.conv3 = spconv.SparseSequential(
             SparseConv3d(
                 32, 64, 3, 2, padding=1, bias=False
             ),  # [800, 600, 21] -> [400, 300, 11]
             build_norm_layer(norm_cfg, 64)[1],
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             SparseBasicBlock(64, 64, norm_cfg=norm_cfg, indice_key="res2"),
             SparseBasicBlock(64, 64, norm_cfg=norm_cfg, indice_key="res2"),
+        )
+
+        self.conv4 = spconv.SparseSequential(
             SparseConv3d(
                 64, 128, 3, 2, padding=[0, 1, 1], bias=False
             ),  # [400, 300, 11] -> [200, 150, 5]
             build_norm_layer(norm_cfg, 128)[1],
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             SparseBasicBlock(128, 128, norm_cfg=norm_cfg, indice_key="res3"),
             SparseBasicBlock(128, 128, norm_cfg=norm_cfg, indice_key="res3"),
+        )
+
+
+        self.extra_conv = spconv.SparseSequential(
             SparseConv3d(
                 128, 128, (3, 1, 1), (2, 1, 1), bias=False
             ),  # [200, 150, 5] -> [200, 150, 2]
@@ -353,36 +369,36 @@ class SpMiddleResNetFHD(nn.Module):
             nn.ReLU(),
         )
 
-    def forward(
-        self,
-        voxel_features: torch.Tensor,
-        coors: torch.Tensor,
-        batch_size: int,
-        input_shape: np.ndarray
-    ):
-        """
-        Args:
-            voxel_features: tensor of shape [360000, 5]
-            coors: tensor of shape [360000, 4]
-            batch_size: integer
-            input_shape: array of shape (3,) e.g. [1440, 1440,   40]
-        
-        Returns:
-            ret
-        """
+    def forward(self, voxel_features, coors, batch_size, input_shape):
+
         # input: # [41, 1600, 1408]
         sparse_shape = np.array(input_shape[::-1]) + [1, 0, 0]
 
         coors = coors.int()
         ret = spconv.SparseConvTensor(voxel_features, coors, sparse_shape, batch_size)
-        ret = self.middle_conv(ret)
+
+        x = self.conv_input(ret)
+
+        x_conv1 = self.conv1(x)
+        x_conv2 = self.conv2(x_conv1)
+        x_conv3 = self.conv3(x_conv2)
+        x_conv4 = self.conv4(x_conv3)
+
+        ret = self.extra_conv(x_conv4)
+
         ret = ret.dense()
 
         N, C, D, H, W = ret.shape
         ret = ret.view(N, C * D, H, W)
 
-        return ret
+        multi_scale_voxel_features = {
+            'conv1': x_conv1,
+            'conv2': x_conv2,
+            'conv3': x_conv3,
+            'conv4': x_conv4,
+        }
 
+        return ret, multi_scale_voxel_features
 
 # class SASSDFHD(nn.Module):
 #     def __init__(
