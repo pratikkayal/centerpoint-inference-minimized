@@ -46,34 +46,3 @@ Make sure you use the same CUDA version for all installations (set CUDA_HOME bef
 
 Added here:
 https://github.com/pytorch/vision/pull/1586/files
-
-## nuScenes Coordinate System
-
-The nuScenes egovehicle coordinate frame is situated on the ground underneath the center of rear axle. Consider the pose of the LiDAR sensor in the egovehicle frame:
-```python
-egovehicle_SE3_lidar.translation
-array([0.94, 0.      , 1.84 ])
-```
-This means the LiDAR is on the center of the car, 1.84 meters above the ground. It is also almost one meter forward (+x) from the rear axle.
-
-What about the relative orientation between the frames?
-```python
-Rotation.from_matrix(egovehicle_SE3_lidar.rotation).as_euler('zyx', degrees=True)
-array([-89.9,   1.4,   0.3])
-```
-We see that the LiDAR frame is basically rotated -90 degrees from the egovehicle frame
-
-```python
-np.round(egovehicle_SE3_lidar.transform_point_cloud(np.eye(3)),2)
-array([[ 0.95, -1.  ,  1.83],
-       [ 1.94,  0.  ,  1.82],
-       [ 0.97, -0.01,  2.84]])
-```
-<p align="center">
-  <img src="https://www.nuscenes.org/public/images/data.png" height="400">
-  <img src="https://user-images.githubusercontent.com/16724970/102704589-60dcde00-424b-11eb-8997-aff36f705404.jpg" height="400">
-</p>
-
-## Another Option for DCN:
-Pytorch deformable conv: https://pytorch.org/docs/stable/_modules/torchvision/ops/deform_conv.html#deform_conv2d
-
